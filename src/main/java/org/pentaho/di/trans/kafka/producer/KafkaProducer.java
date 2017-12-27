@@ -1,9 +1,10 @@
 package org.pentaho.di.trans.kafka.producer;
 
-import java.io.UnsupportedEncodingException;
-import java.util.Map.Entry;
-import java.util.Properties;
-
+import com.google.common.base.Charsets;
+import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.serialization.ByteArraySerializer;
+import org.apache.kafka.common.serialization.StringSerializer;
 import org.pentaho.di.core.exception.KettleException;
 import org.pentaho.di.core.row.RowMetaInterface;
 import org.pentaho.di.trans.Trans;
@@ -14,9 +15,9 @@ import org.pentaho.di.trans.step.StepInterface;
 import org.pentaho.di.trans.step.StepMeta;
 import org.pentaho.di.trans.step.StepMetaInterface;
 
-import kafka.javaapi.producer.Producer;
-import kafka.producer.KeyedMessage;
-import kafka.producer.ProducerConfig;
+import java.util.Map.Entry;
+import java.util.Properties;
+
 
 /**
  * Kafka Producer step processor
@@ -25,15 +26,11 @@ import kafka.producer.ProducerConfig;
  */
 public class KafkaProducer extends BaseStep implements StepInterface {
 
-	private final static byte[] getUTFBytes(String source) {
+	private static byte[] getUTFBytes(String source) {
 		if (source == null) {
 			return null;
 		}
-		try {
-			return source.getBytes("UTF-8");
-		} catch (UnsupportedEncodingException e) {
-			return null;
-		}
+		return source.getBytes(Charsets.UTF_8);
 	}
 
 	public KafkaProducer(StepMeta stepMeta, StepDataInterface stepDataInterface, int copyNr, TransMeta transMeta,
@@ -70,13 +67,14 @@ public class KafkaProducer extends BaseStep implements StepInterface {
 				Properties properties = meta.getKafkaProperties();
 				Properties substProperties = new Properties();
 				for (Entry<Object, Object> e : properties.entrySet()) {
-					substProperties.put(e.getKey(), environmentSubstitute(e.getValue().toString()));
+					substProperties.put((String) e.getKey(), environmentSubstitute(e.getValue().toString()));
 				}
 
-				ProducerConfig producerConfig = new ProducerConfig(substProperties);
-				logBasic(Messages.getString("KafkaProducerStep.CreateKafkaProducer.Message",
-						producerConfig.brokerList()));
-				data.producer = new Producer<Object, Object>(producerConfig);
+				// We must hard-code these, otherwise the class is not found at runtime.
+				substProperties.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class);
+				substProperties.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+
+				data.producer = new org.apache.kafka.clients.producer.KafkaProducer<Object, Object>(substProperties);
 			}
 
 			data.outputRowMeta = getInputRowMeta().clone();
@@ -149,7 +147,7 @@ public class KafkaProducer extends BaseStep implements StepInterface {
 			}
 
 			if (data.keyFieldNr < 0) {
-				data.producer.send(new KeyedMessage<Object, Object>(topic, message));
+				data.producer.send(new ProducerRecord<Object, Object>(topic, message));
 			} else {
 				byte[] key = null;
 				if (data.keyIsString) {
@@ -158,7 +156,7 @@ public class KafkaProducer extends BaseStep implements StepInterface {
 					key = data.keyFieldMeta.getBinary(r[data.keyFieldNr]);
 				}
 
-				data.producer.send(new KeyedMessage<Object, Object>(topic, key, message));
+				data.producer.send(new ProducerRecord<Object, Object>(topic, key, message));
 			}
 
 			incrementLinesOutput();
